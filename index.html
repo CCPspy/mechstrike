@@ -902,7 +902,8 @@ class MenuPreview {
         this.dom.style.height = h + "px";
 
         if(greyBg) {
-            this.renderer.setClearColor(0x111111, 1);
+            // FIXED: Brighter grey background for lobby visibility
+            this.renderer.setClearColor(0x333333, 1);
             // Zoom out slightly for Lobby view (Smaller mech)
             this.camera.position.z = 8.0; 
         } else {
@@ -939,6 +940,7 @@ class Game {
         this.scoreProcessed = false;
         this.recoil = { x:0, y:0 };
         this.shake = 0;
+        this.altHeld = false; // New state for cursor release
         
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x87CEEB); 
@@ -1009,7 +1011,7 @@ class Game {
                 }
             });
             ci.addEventListener('blur', () => {
-                if(this.state === 'GAME' && !document.pointerLockElement && $('pause-menu').style.display === 'none' && this.respawnTimer <= 0) {
+                if(this.state === 'GAME' && !document.pointerLockElement && $('pause-menu').style.display === 'none' && this.respawnTimer <= 0 && !this.altHeld) {
                     setTimeout(() => ci.focus(), 10);
                 }
             });
@@ -1073,15 +1075,26 @@ class Game {
             }
             if((e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight') && this.state==='GAME') {
                 e.preventDefault();
+                this.altHeld = true;
                 document.exitPointerLock();
             }
+            if(e.key === 'Escape' && this.state === 'GAME') {
+                e.preventDefault();
+                this.togglePause();
+            }
         });
-        document.addEventListener('keyup', e=>k(e.code,0));
+        document.addEventListener('keyup', e=>{
+            k(e.code,0);
+            if((e.key === 'Alt' || e.code === 'AltLeft' || e.code === 'AltRight') && this.state==='GAME') {
+                this.altHeld = false;
+                if(!this.paused) document.body.requestPointerLock();
+            }
+        });
         
         document.addEventListener('mousedown', e=>{
             if(this.state==='GAME' && this.respawnTimer<=0 && !this.paused && $('chat-input') !== document.activeElement) {
                 if(e.button===0) { 
-                    if(document.pointerLockElement !== document.body) document.body.requestPointerLock();
+                    if(document.pointerLockElement !== document.body && !this.altHeld) document.body.requestPointerLock();
                     this.inputs.fire=true; 
                 }
                 const code = 'Mouse'+e.button;
@@ -1107,7 +1120,7 @@ class Game {
             if(this.state === 'GAME' && this.respawnTimer<=0 && !this.paused) {
                 const cap = $('click-capture');
                 const chatting = $('chat-input') === document.activeElement;
-                if(cap && !chatting) cap.style.display = document.pointerLockElement ? 'none' : 'flex';
+                if(cap && !chatting && !this.altHeld) cap.style.display = document.pointerLockElement ? 'none' : 'flex';
             }
         });
     }
@@ -1180,7 +1193,12 @@ class Game {
         // Pause Logic
         if(this.paused) {
              const humanCount = Object.keys(this.players).filter(id => !this.players[id].isBot).length;
-             if(this.isHost && humanCount === 1) return;
+             // If I am host and alone (or just single player), stop physics update
+             if(this.isHost && humanCount === 1) {
+                 // Render scene frozen but skip updates
+                 this.renderer.render(this.scene, this.camera);
+                 return;
+             }
         }
 
         if(this.state==='GAME') {
@@ -1219,6 +1237,7 @@ class Game {
     }
 
     hostLoop(dt) {
+        // Double check pause (already handled in main loop, but safety)
         if(this.paused) {
              const humanCount = Object.keys(this.players).filter(id => !this.players[id].isBot).length;
              if(humanCount === 1) return;
@@ -2530,15 +2549,19 @@ const menu = {
     },
     leaveRoom: () => {
         if(game) {
-             const conf = confirm("Leave current room?");
-             if(conf) {
-                if(game.isHost) {
-                   game.conns.forEach(c => c.close());
-                } else if (game.conn) {
-                   game.conn.close();
+            // Updated Logic: Check for Host vs Client
+            if(game.isHost) {
+                const conf = confirm("WARNING: You are the Host! Closing this lobby will disconnect all players. Proceed?");
+                if(conf) {
+                    game.conns.forEach(c => c.close());
+                    if(game.peer) game.peer.destroy();
+                    menu.backToMain();
                 }
+            } else {
+                // Clients just leave without warning others (except via net msg)
+                if (game.conn) game.conn.close();
                 menu.backToMain();
-             }
+            }
         }
     },
     updateSens: (v)=>{ SENSITIVITY=parseFloat(v); $('sens-val').innerText=v; },
@@ -2562,6 +2585,16 @@ const menu = {
         const cont = $('keybinds-container');
         cont.innerHTML = '';
         
+        // Add static row for ESC
+        const mkRow = (lbl, key) => {
+            const row = document.createElement('div');
+            row.className = 'keybind-row';
+            row.innerHTML = `<span>${lbl}</span><span style="color:var(--primary); font-size:0.8rem;">${key}</span>`;
+            return row;
+        };
+        cont.appendChild(mkRow("PAUSE MENU", "ESC"));
+        cont.appendChild(mkRow("RELEASE CURSOR (HOLD)", "ALT"));
+
         const keys = ['fwd', 'bwd', 'left', 'right', 'ability'];
         
         keys.forEach(key => {
@@ -2675,6 +2708,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
     preview = new MenuPreview();
     game = new Game();
+    
+    // FIXED: Explicit resize here solves the load-time distortion
+    preview.resize(400, 300);
+
     menu.selectClass('balanced'); 
     $('menu-screen').classList.remove('hidden');
 });
