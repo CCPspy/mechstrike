@@ -1204,7 +1204,7 @@ class Game {
         if(this.state==='GAME') {
             this.updatePhysics(dt);
             const p = this.players[this.myId];
-            if(p && p.hp > 0) {
+            if(p) { // MODIFIED: Removed hp > 0 check to allow camera to follow dead body (Fixes Freeze)
                 let sx=0, sy=0;
                 if(this.shake > 0) {
                     sx = (Math.random()-0.5)*this.shake;
@@ -1721,7 +1721,10 @@ class Game {
 
         if(!isBot) { this.gunG.position.z=0.1; setTimeout(()=>this.gunG.position.z=-0.5, 50); }
 
-        const yaw = isBot ? (act.aimYaw || act.yaw) : this.cam.yaw;
+        // MODIFIED: Added bot inaccuracy
+        let yaw = isBot ? (act.aimYaw || act.yaw) : this.cam.yaw;
+        if(isBot) yaw += (Math.random()-0.5) * 0.2; // Mistake factor (+/- 0.1 radians)
+
         const offset = new THREE.Vector3(0.5, 1.8, 1.5).applyAxisAngle(new THREE.Vector3(0,1,0), yaw);
         const start = new THREE.Vector3(act.x, act.y, act.z).add(offset);
         
